@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -22,29 +21,32 @@ func run() error {
 	pkgPath := flag.String("pkg-path", "/home/ezra/Desktop/golang-projects/microservices", "path to a golang project")
 	flag.Parse()
 
-	c := pkgdiff.New(pkgstructure.Opts{
+	c, err := pkgdiff.New(pkgstructure.Opts{
 		PackagePath:              *pkgPath,
 		WithExternalDependencies: false,
 	})
-
-	s, err := c.GetPkgStructure()
 	if err != nil {
 		return err
 	}
 
-	type wrapper struct {
-		Packages []pkgstructure.Package `json:"packages"`
-	}
-
-	w := wrapper{
-		Packages: s,
-	}
-	b, err := json.MarshalIndent(w, "", "	")
+	_, err = c.GetPkgStructure()
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(string(b))
+	// type wrapper struct {
+	// 	Packages []pkgstructure.Package `json:"packages"`
+	// }
+
+	// w := wrapper{
+	// 	Packages: s,
+	// }
+	// b, err := json.MarshalIndent(w, "", "	")
+	// if err != nil {
+	// 	return err
+	// }
+
+	// fmt.Println(string(b))
 	return nil
 
 }

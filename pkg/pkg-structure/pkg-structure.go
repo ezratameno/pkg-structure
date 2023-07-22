@@ -17,29 +17,34 @@ type Client struct {
 type Opts struct {
 	PackagePath              string
 	WithExternalDependencies bool
+	Module                   string
 }
 
-func New(opts Opts) *Client {
+func New(opts Opts) (*Client, error) {
+
+	if opts.Module == "" {
+		items, err := ioutil.ReadDir(opts.PackagePath)
+		if err != nil {
+			return nil, err
+		}
+
+		module, err := findModule(items, opts.PackagePath)
+		if err != nil {
+			return nil, err
+		}
+		opts.Module = module
+	}
+
 	return &Client{
 		Opts: opts,
-	}
+	}, nil
 }
 
 func (c *Client) GetPkgStructure() ([]Package, error) {
 
-	items, err := ioutil.ReadDir(c.PackagePath)
-	if err != nil {
-		return nil, err
-	}
-
-	module, err := findModule(items, c.PackagePath)
-	if err != nil {
-		return nil, err
-	}
-
 	packages := make(map[string]Package)
 
-	err = filepath.Walk(c.PackagePath, func(filePath string, info fs.FileInfo, err error) error {
+	err := filepath.Walk(c.PackagePath, func(filePath string, info fs.FileInfo, err error) error {
 
 		// ignore vendor packages
 		if strings.Contains(filePath, "vendor") {
@@ -48,7 +53,7 @@ func (c *Client) GetPkgStructure() ([]Package, error) {
 
 		// go over golang files
 		if strings.HasSuffix(info.Name(), ".go") {
-			pkg, err := c.getFileData(module, filePath)
+			pkg, err := c.getFileData(filePath)
 			if err != nil {
 				return err
 			}
@@ -131,7 +136,7 @@ func getModule(path string) (string, error) {
 	return "", fmt.Errorf("module not found")
 }
 
-func (c *Client) getFileData(module, filePath string) (File, error) {
+func (c *Client) getFileData(filePath string) (File, error) {
 	data, err := os.ReadFile(filePath)
 
 	if err != nil {
@@ -147,8 +152,8 @@ func (c *Client) getFileData(module, filePath string) (File, error) {
 
 	p := File{
 		FileName:     filePath,
-		PkgName:      path.Join(module, pkgName),
-		Dependencies: c.getImports(lines, module),
+		PkgName:      path.Join(c.Module, pkgName),
+		Dependencies: c.getImports(lines),
 	}
 
 	return p, nil
@@ -164,7 +169,7 @@ func getPackageName(lines []string) (string, error) {
 	return "", fmt.Errorf("package not found")
 }
 
-func (c *Client) getImports(lines []string, module string) []string {
+func (c *Client) getImports(lines []string) []string {
 	for i, line := range lines {
 		if strings.HasPrefix(line, "import") {
 
@@ -176,7 +181,7 @@ func (c *Client) getImports(lines []string, module string) []string {
 				// just remove the quotas around the import
 				dependency := line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]
 
-				if !c.WithExternalDependencies && !strings.Contains(dependency, module) {
+				if !c.WithExternalDependencies && !strings.Contains(dependency, c.Module) {
 					return nil
 				}
 				return []string{line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]}
@@ -190,7 +195,7 @@ func (c *Client) getImports(lines []string, module string) []string {
 					if line != "" {
 						dependency := line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]
 
-						if !c.WithExternalDependencies && !strings.Contains(dependency, module) {
+						if !c.WithExternalDependencies && !strings.Contains(dependency, c.Module) {
 
 							j++
 							line = lines[j]
