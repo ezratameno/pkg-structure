@@ -226,3 +226,20 @@ func (c *Client) getImports(lines []string) []string {
 
 	return nil
 }
+
+// GetDependedPackages will return depended packages.
+func (c *Client) GetDependedPackages(pkg Package, pkgs []Package) []Package {
+	var dependedPackages []Package
+
+	// go over all the packages and check their dependencies.
+	for _, p := range pkgs {
+		for _, dep := range p.Dependencies {
+			if dep == pkg.Name {
+				dependedPackages = append(dependedPackages, p)
+			}
+		}
+	}
+
+	return dependedPackages
+
+}
