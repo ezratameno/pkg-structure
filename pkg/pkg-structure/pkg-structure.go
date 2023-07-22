@@ -155,6 +155,8 @@ func (c *Client) getFileData(filePath string) (File, error) {
 
 	// check if the directory name is not the same as the package name
 	// then update the packageName
+	// TODO: improve this part
+	// what happens when the package is main?
 	if path.Base(fullPackageName) != packageName {
 		fullPackageName = path.Join(path.Dir(fullPackageName), packageName)
 	}
@@ -231,15 +233,23 @@ func (c *Client) getImports(lines []string) []string {
 func (c *Client) GetDependedPackages(pkg Package, pkgs []Package) []Package {
 	var dependedPackages []Package
 
+	c.getDependedPackages(pkg, pkgs, &dependedPackages)
+
+	return dependedPackages
+
+}
+
+func (c *Client) getDependedPackages(pkg Package, pkgs []Package, dependedPackages *[]Package) {
+
 	// go over all the packages and check their dependencies.
 	for _, p := range pkgs {
 		for _, dep := range p.Dependencies {
 			if dep == pkg.Name {
-				dependedPackages = append(dependedPackages, p)
+				*dependedPackages = append(*dependedPackages, p)
+				c.getDependedPackages(p, pkgs, dependedPackages)
+
 			}
 		}
 	}
-
-	return dependedPackages
 
 }
