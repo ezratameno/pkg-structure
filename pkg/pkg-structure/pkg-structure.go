@@ -1,8 +1,6 @@
-package main
+package pkgstructure
 
 import (
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io/fs"
 	"io/ioutil"
@@ -12,31 +10,36 @@ import (
 	"strings"
 )
 
-func main() {
-	if err := run(); err != nil {
-		fmt.Fprint(os.Stderr, err)
-		os.Exit(1)
+type Client struct {
+	Opts
+}
+
+type Opts struct {
+	PackagePath              string
+	WithExternalDependencies bool
+}
+
+func New(opts Opts) *Client {
+	return &Client{
+		Opts: opts,
 	}
 }
 
-func run() error {
+func (c *Client) GetPkgStructure() ([]Package, error) {
 
-	pkgPath := flag.String("pkg-path", "/home/ezra/Desktop/golang-projects/microservices", "path to a golang project")
-	flag.Parse()
-
-	items, err := ioutil.ReadDir(*pkgPath)
+	items, err := ioutil.ReadDir(c.PackagePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	module, err := findModule(items, *pkgPath)
+	module, err := findModule(items, c.PackagePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	packages := make(map[string]Package)
 
-	err = filepath.Walk(*pkgPath, func(filePath string, info fs.FileInfo, err error) error {
+	err = filepath.Walk(c.PackagePath, func(filePath string, info fs.FileInfo, err error) error {
 
 		// ignore vendor packages
 		if strings.Contains(filePath, "vendor") {
@@ -45,8 +48,7 @@ func run() error {
 
 		// go over golang files
 		if strings.HasSuffix(info.Name(), ".go") {
-
-			pkg, err := getFileData(module, filePath)
+			pkg, err := c.getFileData(module, filePath)
 			if err != nil {
 				return err
 			}
@@ -55,7 +57,7 @@ func run() error {
 			dependencies := pkg.Dependencies
 
 			// add the information gathered from other files in of the same package
-			if p, ok := packages[pkg.Name]; ok {
+			if p, ok := packages[pkg.PkgName]; ok {
 
 				files = append(files, p.Files...)
 				dependencies = append(dependencies, p.Dependencies...)
@@ -66,7 +68,7 @@ func run() error {
 
 			p := Package{
 				Files:        files,
-				Name:         pkg.Name,
+				Name:         pkg.PkgName,
 				Dependencies: dependencies,
 			}
 
@@ -78,36 +80,15 @@ func run() error {
 	})
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	type wrapper struct {
-		Packages map[string]Package `json:"packages"`
+	var pkgs []Package
+	for _, v := range packages {
+		pkgs = append(pkgs, v)
 	}
 
-	w := wrapper{
-		Packages: packages,
-	}
-	b, err := json.MarshalIndent(w, "", "	")
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(string(b))
-
-	return nil
-}
-
-func removeDuplicate[T string | int](sliceList []T) []T {
-	allKeys := make(map[T]bool)
-	list := []T{}
-	for _, item := range sliceList {
-		if _, value := allKeys[item]; !value {
-			allKeys[item] = true
-			list = append(list, item)
-		}
-	}
-	return list
+	return pkgs, nil
 }
 
 // findModule will return the module name in the go.mod file.
@@ -150,18 +131,7 @@ func getModule(path string) (string, error) {
 	return "", fmt.Errorf("module not found")
 }
 
-type Package struct {
-	Files        []string `json:"files"`
-	Name         string   `json:"name"`
-	Dependencies []string `json:"dependencies"`
-}
-type File struct {
-	FileName     string   `json:"files"`
-	Name         string   `json:"name"`
-	Dependencies []string `json:"dependencies"`
-}
-
-func getFileData(module, filePath string) (File, error) {
+func (c *Client) getFileData(module, filePath string) (File, error) {
 	data, err := os.ReadFile(filePath)
 
 	if err != nil {
@@ -177,8 +147,8 @@ func getFileData(module, filePath string) (File, error) {
 
 	p := File{
 		FileName:     filePath,
-		Name:         path.Join(module, pkgName),
-		Dependencies: getImports(lines),
+		PkgName:      path.Join(module, pkgName),
+		Dependencies: c.getImports(lines, module),
 	}
 
 	return p, nil
@@ -194,7 +164,7 @@ func getPackageName(lines []string) (string, error) {
 	return "", fmt.Errorf("package not found")
 }
 
-func getImports(lines []string) []string {
+func (c *Client) getImports(lines []string, module string) []string {
 	for i, line := range lines {
 		if strings.HasPrefix(line, "import") {
 
@@ -204,7 +174,11 @@ func getImports(lines []string) []string {
 			switch strings.Contains(line, `"`) {
 			case true:
 				// just remove the quotas around the import
+				dependency := line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]
 
+				if !c.WithExternalDependencies && !strings.Contains(dependency, module) {
+					return nil
+				}
 				return []string{line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]}
 			case false:
 
@@ -212,8 +186,19 @@ func getImports(lines []string) []string {
 				j := i + 1
 				line = lines[j]
 				for !strings.Contains(line, ")") {
-					if strings.TrimSpace(line) != "" {
-						dependencies = append(dependencies, line[strings.Index(line, `"`)+1:strings.LastIndex(line, `"`)])
+					line = strings.TrimSpace(line)
+					if line != "" {
+						dependency := line[strings.Index(line, `"`)+1 : strings.LastIndex(line, `"`)]
+
+						if !c.WithExternalDependencies && !strings.Contains(dependency, module) {
+
+							j++
+							line = lines[j]
+							continue
+						}
+
+						dependencies = append(dependencies, dependency)
+
 					}
 					j++
 					line = lines[j]
