@@ -145,14 +145,24 @@ func (c *Client) getFileData(filePath string) (File, error) {
 
 	lines := strings.Split(string(data), "\n")
 
-	pkgName, err := getPackageName(lines)
+	packageName, err := getPackageName(lines)
 	if err != nil {
 		return File{}, err
 	}
 
+	fullPackageName := strings.TrimPrefix(filePath, c.PackagePath)
+	fullPackageName = path.Dir(fullPackageName)
+
+	// check if the directory name is not the same as the package name
+	// then update the packageName
+	if path.Base(fullPackageName) != packageName {
+		fullPackageName = path.Join(path.Dir(fullPackageName), packageName)
+	}
+
+	fullPackageName = path.Join(c.Module, fullPackageName)
 	p := File{
 		FileName:     filePath,
-		PkgName:      path.Join(c.Module, pkgName),
+		PkgName:      fullPackageName,
 		Dependencies: c.getImports(lines),
 	}
 
