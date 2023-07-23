@@ -1,9 +1,10 @@
 package pkgstructure
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
-	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -23,12 +24,12 @@ type Opts struct {
 func New(opts Opts) (*Client, error) {
 
 	if opts.Module == "" {
-		items, err := ioutil.ReadDir(opts.PackagePath)
+		entries, err := os.ReadDir(opts.PackagePath)
 		if err != nil {
 			return nil, err
 		}
 
-		module, err := findModule(items, opts.PackagePath)
+		module, err := findModule(entries, opts.PackagePath)
 		if err != nil {
 			return nil, err
 		}
@@ -44,46 +45,53 @@ func (c *Client) GetPkgStructure() ([]Package, error) {
 
 	packages := make(map[string]Package)
 
-	err := filepath.Walk(c.PackagePath, func(filePath string, info fs.FileInfo, err error) error {
+	err := filepath.WalkDir(c.PackagePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
 
 		// ignore vendor packages
-		if strings.Contains(filePath, "vendor") {
+		if d.IsDir() && d.Name() == "vendor" {
+			return filepath.SkipDir
+		}
+
+		// Skip non golang files
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".go" {
 			return nil
 		}
 
 		// go over golang files
-		if strings.HasSuffix(info.Name(), ".go") {
-			pkg, err := c.getFileData(filePath)
-			if err != nil {
-				return err
-			}
-
-			files := []string{pkg.FileName}
-			dependencies := pkg.Dependencies
-
-			// add the information gathered from other files in of the same package
-			if p, ok := packages[pkg.PkgName]; ok {
-
-				files = append(files, p.Files...)
-				dependencies = append(dependencies, p.Dependencies...)
-
-				// remove duplicated dependencies between files under the same package
-				dependencies = removeDuplicate[string](dependencies)
-			}
-
-			p := Package{
-				Files:        files,
-				Name:         pkg.PkgName,
-				Dependencies: dependencies,
-			}
-
-			packages[p.Name] = p
-
+		file, err := c.getFileData(path)
+		if err != nil {
+			return err
 		}
+
+		files := []string{file.FileName}
+		dependencies := file.Dependencies
+
+		// add the information gathered from other files in of the same package
+		if p, ok := packages[file.PkgName]; ok {
+
+			files = append(files, p.Files...)
+			dependencies = append(dependencies, p.Dependencies...)
+
+			// remove duplicated dependencies between files under the same package
+			dependencies = removeDuplicate[string](dependencies)
+		}
+
+		p := Package{
+			Files:        files,
+			Name:         file.PkgName,
+			Dependencies: dependencies,
+			IsMain:       file.IsMain,
+		}
+
+		packages[p.Name] = p
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -97,30 +105,26 @@ func (c *Client) GetPkgStructure() ([]Package, error) {
 }
 
 // findModule will return the module name in the go.mod file.
-func findModule(items []fs.FileInfo, base string) (string, error) {
-	for _, item := range items {
-
-		if item.IsDir() {
-			continue
+func findModule(items []fs.DirEntry, base string) (string, error) {
+	goMod := path.Join(base, "go.mod")
+	_, err := os.Stat(goMod)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("could not find go.mod file in the provided path")
 		}
-
-		if item.Name() == "go.mod" {
-			module, err := getModule(path.Join(base, item.Name()))
-			if err != nil {
-				return "", err
-			}
-
-			return module, nil
-		}
+		return "", err
 	}
 
-	return "", nil
+	module, err := getModule(goMod)
+	if err != nil {
+		return "", err
+	}
+
+	return module, nil
 }
 
 func getModule(path string) (string, error) {
-
 	data, err := os.ReadFile(path)
-
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +142,6 @@ func getModule(path string) (string, error) {
 
 func (c *Client) getFileData(filePath string) (File, error) {
 	data, err := os.ReadFile(filePath)
-
 	if err != nil {
 		return File{}, err
 	}
@@ -157,8 +160,12 @@ func (c *Client) getFileData(filePath string) (File, error) {
 	// then update the packageName
 	// TODO: improve this part
 	// what happens when the package is main?
-	if path.Base(fullPackageName) != packageName {
-		fullPackageName = path.Join(path.Dir(fullPackageName), packageName)
+	isMain := false
+	if packageName == "main" {
+		isMain = true
+	}
+	if path.Base(fullPackageName) != packageName && !isMain {
+		fullPackageName = path.Join(fullPackageName, packageName)
 	}
 
 	fullPackageName = path.Join(c.Module, fullPackageName)
@@ -166,6 +173,7 @@ func (c *Client) getFileData(filePath string) (File, error) {
 		FileName:     filePath,
 		PkgName:      fullPackageName,
 		Dependencies: c.getImports(lines),
+		IsMain:       isMain,
 	}
 
 	return p, nil
