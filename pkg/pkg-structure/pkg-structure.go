@@ -98,6 +98,12 @@ func (c *Client) GetPkgStructure() ([]Package, error) {
 
 	var pkgs []Package
 	for _, v := range packages {
+		types, err := c.getTypes(v)
+		if err != nil {
+			return nil, err
+		}
+
+		v.Types = types
 		pkgs = append(pkgs, v)
 	}
 

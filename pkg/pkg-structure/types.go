@@ -6,6 +6,8 @@ type Package struct {
 	// Depeancies are the packages used in the 'import' of the package
 	Dependencies []string `json:"dependencies"`
 	IsMain       bool     `json:"isMain"`
+
+	Types []GolangType `json:"types"`
 }
 type File struct {
 	FileName     string   `json:"files"`
